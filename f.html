@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Wire Drawing Drafting Calculator</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    h2 { margin-top: 30px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+    th { background-color: #f2f2f2; }
+    input { width: 80px; }
+    .container { overflow-x: auto; }
+    #draftingChart {
+      height: 600px !important;
+      max-height: 600px;
+    }
+  </style>
+</head>
+<body>
+  <h1>🧵 Wire Drawing Drafting Calculator with 0.47 reduction after 2 pass and before last pass</h1>
+  <p>Enter initial D₀, final D₁, and number of passes. Die angles are set automatically (last 4 passes: 9°, rest: 11°):</p>
+
+  <form id="draftingForm">
+    <label>Initial Diameter D₀: <input type="number" step="0.01" id="initialD0" value="5.6" required></label><br><br>
+    <label>Final Diameter D₁: <input type="number" step="0.01" id="finalD1" value="1.85" required></label><br><br>
+    <label>Number of Passes: <input type="number" id="numPasses" value="11" min="3" required></label><br><br>
+    <button type="submit">Calculate & Plot</button>
+  </form>
+
+  <div id="results" style="display:none;">
+    <h2>📋 Drafting Table</h2>
+    <div class="container">
+      <table id="resultTable"></table>
+    </div>
+
+    <h2>📊 Graph: Area Reduction & Delta Factor</h2>
+    <canvas id="draftingChart"></canvas>
+  </div>
+
+  <script>
+    function calcReduction(d0, d1) {
+      return (1 - Math.pow(d1 / d0, 2)) * 100;
+    }
+
+    function getAlphaRad(deg) {
+      const lookup = { 3.5: 0.0611, 4.0: 0.0698, 4.5: 0.0785, 5.0: 0.0873, 5.5: 0.0960 };
+      const key = (deg / 2).toFixed(1);
+      return lookup[key] || (deg / 2 * Math.PI / 180);
+    }
+
+    function calcDelta(d0, d1, angle) {
+      if (d0 === d1) return 0;
+      const alpha = getAlphaRad(angle);
+      return ((d0 + d1) / (d0 - d1)) * Math.sin(alpha);
+    }
+
+    let chartInstance = null;
+
+    document.getElementById("draftingForm").addEventListener("submit", function (e) {
+      e.preventDefault();
+
+      const initialD0 = parseFloat(document.getElementById("initialD0").value);
+      const finalD1 = parseFloat(document.getElementById("finalD1").value);
+      const numPasses = parseInt(document.getElementById("numPasses").value);
+
+      const data = [];
+      let currentD0 = initialD0;
+
+      // Fixed reduction for pass 1, 2, and final pass
+      const reductions = [18.03, 22.62];
+      const middlePasses = numPasses - 3;
+      const startMidReduction = 21.65;
+      const endMidReduction = 15.07;
+
+      const stepReduction = (startMidReduction - endMidReduction) / (middlePasses - 1);
+      for (let i = 0; i < middlePasses; i++) {
+        reductions.push(startMidReduction - stepReduction * i);
+      }
+      reductions.push(14.59); // last pass
+
+      for (let i = 0; i < numPasses; i++) {
+        const reduction = reductions[i];
+        const d1 = currentD0 * Math.sqrt(1 - reduction / 100);
+        const angle = (i >= numPasses - 4) ? 9.0 : 11.0;
+        const delta = calcDelta(currentD0, d1, angle);
+
+        data.push({
+          pass: i + 1,
+          d0: currentD0.toFixed(2),
+          d1: d1.toFixed(2),
+          angle,
+          reduction: reduction.toFixed(2),
+          delta: delta.toFixed(2)
+        });
+        currentD0 = d1;
+      }
+
+      document.getElementById("results").style.display = "block";
+      const table = document.getElementById("resultTable");
+      table.innerHTML = "<tr><th>Pass</th><th>D0 [mm]</th><th>D1 [mm]</th><th>Die Angle (°)</th><th>Area Reduction (%)</th><th>Delta Factor</th></tr>";
+      data.forEach(row => {
+        table.innerHTML += `<tr><td>${row.pass}</td><td>${row.d0}</td><td>${row.d1}</td><td>${row.angle}</td><td>${row.reduction}</td><td>${row.delta}</td></tr>`;
+      });
+
+      const ctx = document.getElementById("draftingChart").getContext("2d");
+      if (chartInstance) chartInstance.destroy();
+      chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: data.map(r => `Pass ${r.pass}`),
+          datasets: [
+            {
+              label: "Area Reduction (%)",
+              data: data.map(r => r.reduction),
+              borderColor: "blue",
+              yAxisID: 'y1',
+              fill: false
+            },
+            {
+              label: "Delta Factor",
+              data: data.map(r => r.delta),
+              borderColor: "red",
+              borderDash: [5, 5],
+              yAxisID: 'y2',
+              fill: false
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          stacked: false,
+          plugins: {
+            title: { display: true, text: 'Wire Drawing: Area Reduction & Delta Factor per Pass' }
+          },
+          scales: {
+            y1: {
+              type: 'linear', position: 'left', title: { display: true, text: 'Area Reduction (%)' }
+            },
+            y2: {
+              type: 'linear', position: 'right', title: { display: true, text: 'Delta Factor' },
+              grid: { drawOnChartArea: false }
+            }
+          }
+        }
+      });
+    });
+  </script>
+</body>
+</html>
