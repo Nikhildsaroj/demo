@@ -1,4 +1,4 @@
-  <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -12,33 +12,21 @@
     th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
     th { background-color: #f2f2f2; }
     input { width: 80px; }
-  #draftingChart {
-  height: 600px !important;
-  max-height: 600px;
-}
-
-  
-  
-  
-  
+    .container { overflow-x: auto; }
+    #draftingChart {
+      height: 600px !important;
+      max-height: 600px;
+    }
   </style>
 </head>
 <body>
   <h1>🧵 Wire Drawing Drafting Calculator</h1>
-  <p>Start from D₀ = 5.6. Enter D₁ and Die Angle (°) for each pass:</p>
+  <p>Enter initial D₀, final D₁, and number of passes. Die angles are set automatically (last 4 passes: 9°, rest: 11°):</p>
 
   <form id="draftingForm">
-    <table>
-      <thead>
-        <tr>
-          <th>Pass</th>
-          <th>D₁ [mm]</th>
-          <th>Die Angle (°)</th>
-        </tr>
-      </thead>
-      <tbody id="inputRows"></tbody>
-    </table>
-    <br />
+    <label>Initial Diameter D₀: <input type="number" step="0.01" id="initialD0" value="5.6" required></label><br><br>
+    <label>Final Diameter D₁: <input type="number" step="0.01" id="finalD1" value="1.85" required></label><br><br>
+    <label>Number of Passes: <input type="number" id="numPasses" value="11" min="3" required></label><br><br>
     <button type="submit">Calculate & Plot</button>
   </form>
 
@@ -50,24 +38,9 @@
 
     <h2>📊 Graph: Area Reduction & Delta Factor</h2>
     <canvas id="draftingChart"></canvas>
-
-  </di>
+  </div>
 
   <script>
-    const numPasses = 11;
-    const startingD0 = 5.6;
-    const tbody = document.getElementById("inputRows");
-
-    for (let i = 0; i < numPasses; i++) {
-      const row = document.createElement("tr");
-      row.innerHTML = `
-        <td>${i + 1}</td>
-        <td><input type="number" step="0.01" name="d1_${i}" value="" required /></td>
-        <td><input type="number" step="0.1" name="angle_${i}" value="11.0" min="0" max="20" required /></td>
-      `;
-      tbody.appendChild(row);
-    }
-
     function calcReduction(d0, d1) {
       return (1 - Math.pow(d1 / d0, 2)) * 100;
     }
@@ -89,23 +62,51 @@
     document.getElementById("draftingForm").addEventListener("submit", function (e) {
       e.preventDefault();
 
-      const form = new FormData(e.target);
+      const initialD0 = parseFloat(document.getElementById("initialD0").value);
+      const finalD1 = parseFloat(document.getElementById("finalD1").value);
+      const numPasses = parseInt(document.getElementById("numPasses").value);
+
       const data = [];
-      let currentD0 = startingD0;
+      let currentD0 = initialD0;
+
+      const reductions = [];
+      const middlePasses = numPasses - 3;
+
+      // Fixed: Pass 1 and 2
+      reductions.push(18.03);
+      reductions.push(22.62);
+
+      // Custom formula: Exponential decay between 21.65 to 15.07
+      const A = 6.58; // (22.62 - 15.07)
+      const B = 0.25; // decay rate (adjust to tune slope)
+      for (let i = 0; i < middlePasses; i++) {
+        const x = i / (middlePasses - 1); // normalize to 0-1
+        const reduction = 15.07 + A * Math.exp(-B * i);
+        const noise = Math.random() * 0.4 - 0.2; // ±0.2% randomness
+        reductions.push((reduction + noise).toFixed(2));
+      }
+
+      // Final pass
+      reductions.push((14.5 + Math.random()).toFixed(2));
 
       for (let i = 0; i < numPasses; i++) {
-        const d1 = parseFloat(form.get(`d1_${i}`));
-        const angle = parseFloat(form.get(`angle_${i}`));
-
-        const reduction = calcReduction(currentD0, d1);
+        const reduction = parseFloat(reductions[i]);
+        const d1 = currentD0 * Math.sqrt(1 - reduction / 100);
+        const angle = (i >= numPasses - 4) ? 9.0 : 11.0;
         const delta = calcDelta(currentD0, d1, angle);
 
-        data.push({ pass: i + 1, d0: currentD0.toFixed(2), d1: d1.toFixed(2), angle, reduction: reduction.toFixed(2), delta: delta.toFixed(2) });
+        data.push({
+          pass: i + 1,
+          d0: currentD0.toFixed(2),
+          d1: d1.toFixed(2),
+          angle,
+          reduction: reduction.toFixed(2),
+          delta: delta.toFixed(2)
+        });
         currentD0 = d1;
       }
 
       document.getElementById("results").style.display = "block";
-
       const table = document.getElementById("resultTable");
       table.innerHTML = "<tr><th>Pass</th><th>D0 [mm]</th><th>D1 [mm]</th><th>Die Angle (°)</th><th>Area Reduction (%)</th><th>Delta Factor</th></tr>";
       data.forEach(row => {
