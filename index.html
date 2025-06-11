@@ -7,29 +7,52 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     body { font-family: Arial, sans-serif; margin: 20px; }
-    h2 { margin-top: 30px; }
     table { width: 100%; border-collapse: collapse; margin-top: 20px; }
     th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
     th { background-color: #f2f2f2; }
     input { width: 80px; }
     .container { overflow-x: auto; }
-    #draftingChart {
-      height: 600px !important;
-      max-height: 600px;
-    }
-  </style>
+    #draftingChart, #diameterChart { height: 400px !important; max-height: 400px; margin-top: 30px; }
+    .ok { color: green; font-weight: bold; }
+    .fail { color: red; font-weight: bold; }
+  body { font-family: 'Segoe UI', sans-serif; background: #f9f9f9; margin: 0; padding: 0; }
+    .container { max-width: 960px; margin: 0 auto; padding: 20px; }
+    h1 { text-align: center; color: #333; }
+    p, label { color: #444; }
+    form { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
+    label { display: block; margin: 10px 0 5px; }
+    input[type="number"] { width: 100%; padding: 8px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px; }
+    button { background: #007bff; color: #fff; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #0056b3; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; background: #fff; border-radius: 8px; overflow: hidden; }
+    th, td { border: 1px solid #ccc; padding: 10px; text-align: center; }
+    th { background-color: #007bff; color: white; }
+    .ok { color: green; font-weight: bold; }
+    .fail { color: red; font-weight: bold; }
+    canvas { background: #fff; border-radius: 8px; padding: 10px; }</style>
 </head>
 <body>
-  <h1>🧵 Wire Drawing Drafting Calculator</h1>
-  <p>Enter initial D₀, final D₁, and number of passes. Die angles are set automatically (last 4 passes: 9°, rest: 11°):</p>
-  <h2>Delta factor rule =	1.50 to 2.09 </h2>
+  <div class="container">
+    <h1>🧵 Wire Drawing Drafting Calculator</h1>
+    <p>Enter D₀, D₁ and Passes. System uses rule-based reduction and die angles. Final diameter is matched precisely.</p>
+    <p><strong>First block reduction</strong>: 17 to 19%<br>
+       <strong>Second block reduction</strong>: 21 to 22.5%<br>
+       <strong>Last block reduction</strong>: 14.5 to 15.50%<br>
+       <strong>Delta factor</strong>: 1.50 to 2.09<br>
+       <strong>Die angle</strong>: Last 4 blocks = 9°, Rest = 11°</p>
 
-  <form id="draftingForm">
-    <label>Initial Diameter D₀: <input type="number" step="0.01" id="initialD0" value="5.6" required></label><br><br>
-    <label>Final Diameter D₁: <input type="number" step="0.01" id="finalD1" value="1.85" required></label><br><br>
-    <label>Number of Passes: <input type="number" id="numPasses" value="11" min="3" required></label><br><br>
-    <button type="submit">Calculate & Plot</button>
-  </form>
+    <form id="draftingForm">
+      <label for="initialD0">Initial Diameter D₀ (mm):</label>
+      <input type="number" step="0.01" id="initialD0" value="5.6" required>
+
+      <label for="finalD1">Final Diameter D₁ (mm):</label>
+      <input type="number" step="0.01" id="finalD1" value="1.85" required>
+
+      <label for="numPasses">Number of Passes:</label>
+      <input type="number" id="numPasses" value="11" min="5" required>
+
+      <button type="submit">Calculate & Plot</button>
+    </form>
 
   <div id="results" style="display:none;">
     <h2>📋 Drafting Table</h2>
@@ -39,13 +62,12 @@
 
     <h2>📊 Graph: Area Reduction & Delta Factor</h2>
     <canvas id="draftingChart"></canvas>
+
+    <h2>📈 Graph: D₁ vs Pass</h2>
+    <canvas id="diameterChart"></canvas>
   </div>
 
   <script>
-    function calcReduction(d0, d1) {
-      return (1 - Math.pow(d1 / d0, 2)) * 100;
-    }
-
     function getAlphaRad(deg) {
       const lookup = { 3.5: 0.0611, 4.0: 0.0698, 4.5: 0.0785, 5.0: 0.0873, 5.5: 0.0960 };
       const key = (deg / 2).toFixed(1);
@@ -58,7 +80,29 @@
       return ((d0 + d1) / (d0 - d1)) * Math.sin(alpha);
     }
 
+    function scaleMiddleReductions(middleReductions, d0, d1, fixedReductions) {
+      function getFinalDiameter(scale) {
+        let dia = d0;
+        dia *= Math.sqrt(1 - fixedReductions[0] / 100);
+        dia *= Math.sqrt(1 - fixedReductions[1] / 100);
+        for (let red of middleReductions) {
+          dia *= Math.sqrt(1 - red * scale / 100);
+        }
+        dia *= Math.sqrt(1 - fixedReductions[2] / 100);
+        return dia;
+      }
+      let low = 0.5, high = 1.5, mid;
+      for (let i = 0; i < 30; i++) {
+        mid = (low + high) / 2;
+        const result = getFinalDiameter(mid);
+        if (result > d1) low = mid;
+        else high = mid;
+      }
+      return middleReductions.map(r => r * mid);
+    }
+
     let chartInstance = null;
+    let diaChartInstance = null;
 
     document.getElementById("draftingForm").addEventListener("submit", function (e) {
       e.preventDefault();
@@ -67,34 +111,49 @@
       const finalD1 = parseFloat(document.getElementById("finalD1").value);
       const numPasses = parseInt(document.getElementById("numPasses").value);
 
-      const data = [];
-      let currentD0 = initialD0;
-
-      const reductions = [];
-      const middlePasses = numPasses - 3;
-
-      // Fixed: Pass 1 and 2
-      reductions.push(18.03);
-      reductions.push(22.62);
-
-      // Custom formula: Exponential decay between 21.65 to 15.07
-      const A = 6.58; // (22.62 - 15.07)
-      const B = 0.25; // decay rate (adjust to tune slope)
-      for (let i = 0; i < middlePasses; i++) {
-        const x = i / (middlePasses - 1); // normalize to 0-1
-        const reduction = 15.07 + A * Math.exp(-B * i);
-        const noise = Math.random() * 0.4 - 0.2; // ±0.2% randomness
-        reductions.push((reduction + noise).toFixed(2));
+      if (numPasses < 5) {
+        alert("Please enter at least 5 passes to satisfy rule-based drafting.");
+        return;
       }
 
-      // Final pass
-      reductions.push((14.5 + Math.random()).toFixed(2));
+      function getRandomInRange(min, max) {
+        return +(Math.random() * (max - min) + min).toFixed(2);
+      }
+
+      const pass1Reduction = getRandomInRange(17.0, 19.0);
+      const pass2Reduction = getRandomInRange(21.0, 22.5);
+      const lastReduction  = getRandomInRange(14.5, 15.5);
+      const fixedReductions = [pass1Reduction, pass2Reduction, lastReduction];
+
+      const middlePasses = numPasses - 3;
+      const A = 6.58, B = 0.25;
+      const middleBase = [];
+      for (let i = 0; i < middlePasses; i++) {
+        middleBase.push(15.07 + A * Math.exp(-B * i));
+      }
+
+      const scaledMids = scaleMiddleReductions(middleBase, initialD0, finalD1, fixedReductions);
+      const allReductions = [fixedReductions[0], fixedReductions[1], ...scaledMids, fixedReductions[2]];
+
+      let currentD0 = initialD0;
+      const data = [];
 
       for (let i = 0; i < numPasses; i++) {
-        const reduction = parseFloat(reductions[i]);
+        const reduction = allReductions[i];
         const d1 = currentD0 * Math.sqrt(1 - reduction / 100);
         const angle = (i >= numPasses - 4) ? 9.0 : 11.0;
         const delta = calcDelta(currentD0, d1, angle);
+
+        let validation = "✅ OK", cls = "ok";
+        if (d1 >= currentD0) {
+          validation = "❌ D₁ ≥ D₀!", cls = "fail";
+        } else if (i === 0 && (reduction < 17.0 || reduction > 19.0)) {
+          validation = "❌ Out of Range (Pass 1)", cls = "fail";
+        } else if (i === 1 && (reduction < 21.0 || reduction > 22.5)) {
+          validation = "❌ Out of Range (Pass 2)", cls = "fail";
+        } else if (i === numPasses - 1 && (reduction < 14.5 || reduction > 15.5)) {
+          validation = "❌ Out of Range (Last Pass)", cls = "fail";
+        }
 
         data.push({
           pass: i + 1,
@@ -102,16 +161,19 @@
           d1: d1.toFixed(2),
           angle,
           reduction: reduction.toFixed(2),
-          delta: delta.toFixed(2)
+          delta: delta.toFixed(2),
+          validation,
+          cls
         });
+
         currentD0 = d1;
       }
 
       document.getElementById("results").style.display = "block";
       const table = document.getElementById("resultTable");
-      table.innerHTML = "<tr><th>Pass</th><th>D0 [mm]</th><th>D1 [mm]</th><th>Die Angle (°)</th><th>Area Reduction (%)</th><th>Delta Factor</th></tr>";
+      table.innerHTML = "<tr><th>Pass</th><th>D₀ [mm]</th><th>D₁ [mm]</th><th>Die Angle (°)</th><th>Area Reduction (%)</th><th>Delta Factor</th><th>Validation</th></tr>";
       data.forEach(row => {
-        table.innerHTML += `<tr><td>${row.pass}</td><td>${row.d0}</td><td>${row.d1}</td><td>${row.angle}</td><td>${row.reduction}</td><td>${row.delta}</td></tr>`;
+        table.innerHTML += `<tr><td>${row.pass}</td><td>${row.d0}</td><td>${row.d1}</td><td>${row.angle}</td><td>${row.reduction}</td><td>${row.delta}</td><td class='${row.cls}'>${row.validation}</td></tr>`;
       });
 
       const ctx = document.getElementById("draftingChart").getContext("2d");
@@ -154,6 +216,33 @@
               type: 'linear', position: 'right', title: { display: true, text: 'Delta Factor' },
               grid: { drawOnChartArea: false }
             }
+          }
+        }
+      });
+
+      const diaCtx = document.getElementById("diameterChart").getContext("2d");
+      if (diaChartInstance) diaChartInstance.destroy();
+      diaChartInstance = new Chart(diaCtx, {
+        type: 'line',
+        data: {
+          labels: data.map(r => `Pass ${r.pass}`),
+          datasets: [
+            {
+              label: "D₁ Diameter (mm)",
+              data: data.map(r => r.d1),
+              borderColor: "green",
+              fill: false
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            title: { display: true, text: 'Final Diameter D₁ vs Pass' }
+          },
+          scales: {
+            y: { beginAtZero: false, title: { display: true, text: 'D₁ (mm)' } }
           }
         }
       });
